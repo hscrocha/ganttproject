@@ -20,6 +20,8 @@ package biz.ganttproject.storage.cloud
 
 import biz.ganttproject.app.OptionElementData
 import biz.ganttproject.app.OptionPaneBuilder
+import biz.ganttproject.app.RootLocalizer
+import biz.ganttproject.app.dialog
 import biz.ganttproject.core.option.GPOptionGroup
 import biz.ganttproject.lib.fx.VBoxBuilder
 import biz.ganttproject.storage.*
@@ -34,7 +36,6 @@ import javafx.geometry.Pos
 import javafx.scene.Parent
 import javafx.scene.Scene
 import javafx.scene.control.*
-import javafx.scene.input.KeyCombination
 import javafx.scene.layout.Pane
 import javafx.scene.layout.Priority
 import kotlinx.coroutines.Dispatchers
@@ -42,9 +43,11 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import net.sourceforge.ganttproject.GPLogger
 import net.sourceforge.ganttproject.gui.options.OptionPageProviderBase
+import net.sourceforge.ganttproject.language.GanttLanguage
 import java.awt.BorderLayout
 import java.awt.Component
 import java.time.Duration
+import java.util.*
 import javax.swing.JPanel
 
 typealias OnLockDone = (JsonNode?) -> Unit
@@ -59,22 +62,49 @@ class DocPropertiesUi(val errorUi: ErrorUi, val busyUi: BusyUi) {
 
   // ------------------------------------------------------------------------------
   // Locking stuff
-  fun createLockSuggestionPane(document: LockableDocument, onLockDone: OnLockDone): Pane {
-    return lockPaneBuilder().run {
-      buildDialogPane(lockDurationHandler(document, onLockDone)).also {
-        it.styleClass.add("dlg-lock")
-        it.stylesheets.add("/biz/ganttproject/storage/cloud/GPCloudStorage.css")
-      }
+  private fun createLockWarningPage(document: GPCloudDocument): Pane {
+    val notify = CheckBox("Show notification when lock is released").also {
+      it.styleClass.add("mt-5")
+      it.isSelected = true
     }
+
+    return VBoxBuilder().apply {
+      i18n = RootLocalizer.createWithRootKey("cloud.lockOptionPane")
+      addTitle("title")
+      add(Label("Locked by ${document.status.value.lockOwnerName}").apply {
+        styleClass.add("help")
+      })
+      add(notify)
+    }.vbox
   }
 
-  private fun lockPaneBuilder(): OptionPaneBuilder<Duration> {
+
+//  fun createLockSuggestionPane(document: LockableDocument, onLockDone: OnLockDone): Pane {
+//    if (document.status.value.lockedBySomeone) {
+//      return Pane(Label("Locked by ${document.status.value.lockOwnerName}"))
+//    } else {
+//
+//      return lockPaneBuilder(document.status.value).run {
+//        buildDialogPane(lockDurationHandler(document, onLockDone)).also {
+//          it.styleClass.add("dlg-lock")
+//          it.stylesheets.add("/biz/ganttproject/storage/cloud/GPCloudStorage.css")
+//        }
+//      }
+//    }
+//  }
+//
+  private fun lockPaneBuilder(lockStatus: LockStatus): OptionPaneBuilder<Duration> {
     return OptionPaneBuilder<Duration>().apply {
-      i18n.rootKey = "cloud.lockOptionPane"
+      i18n = RootLocalizer.createWithRootKey("cloud.lockOptionPane")
+      if (lockStatus.lockExpiration >= 0) {
+        titleHelpString = i18n.create("titleHelp.locked").update(
+            GanttLanguage.getInstance().formatDateTime(Date(lockStatus.lockExpiration)))
+      }
       graphic = FontAwesomeIconView(FontAwesomeIcon.UNLOCK)
       elements = listOf(
-          OptionElementData("lock0h", Duration.ZERO),
-          OptionElementData("lock1h", Duration.ofHours(1), isSelected = true),
+          OptionElementData(if (lockStatus.locked) "lockRelease" else "lock0h", Duration.ZERO, isSelected = !lockStatus.locked),
+          OptionElementData("lockKeep", Duration.ofHours(-1), isSelected = lockStatus.locked),
+          OptionElementData("lock1h", Duration.ofHours(1)),
           OptionElementData("lock2h", Duration.ofHours(2)),
           OptionElementData("lock24h", Duration.ofHours(24))
       )
@@ -83,15 +113,13 @@ class DocPropertiesUi(val errorUi: ErrorUi, val busyUi: BusyUi) {
 
   private fun lockDurationHandler(document: LockableDocument, onLockDone: OnLockDone): LockDurationHandler {
     return { duration ->
-      if (!duration.isZero || document.status.get().locked) {
+      if (!duration.isNegative) {
         toggleProjectLock(
             document = document,
             done = onLockDone,
             busyIndicator = busyUi,
             lockDuration = duration
         )
-      } else {
-        onLockDone(null)
       }
     }
   }
@@ -118,7 +146,7 @@ class DocPropertiesUi(val errorUi: ErrorUi, val busyUi: BusyUi) {
   // Sync stuff
   private fun mirrorPaneBuilder(document: OnlineDocument): OptionPaneBuilder<OnlineDocumentMode> {
     return OptionPaneBuilder<OnlineDocumentMode>().apply {
-      i18n.rootKey = "cloud.offlineMirrorOptionPane"
+      i18n = OFFLINE_MIRROR_LOCALIZER
       elements = listOf(
           OptionElementData(OnlineDocumentMode.MIRROR.name.toLowerCase(), OnlineDocumentMode.MIRROR,
               isSelected = document.mode.value == OnlineDocumentMode.MIRROR),
@@ -130,10 +158,12 @@ class DocPropertiesUi(val errorUi: ErrorUi, val busyUi: BusyUi) {
 
   private fun mirrorOptionHandler(document: OnlineDocument): MirrorOptionHandler {
     return { mode ->
-      when (mode) {
-        OnlineDocumentMode.MIRROR -> document.setMirrored(true)
-        OnlineDocumentMode.ONLINE_ONLY -> document.setMirrored(false)
-        OnlineDocumentMode.OFFLINE_ONLY -> error("Unexpected mode value=$mode at this place")
+      if (mode != document.mode.value) {
+        when (mode) {
+          OnlineDocumentMode.MIRROR -> document.setMirrored(true)
+          OnlineDocumentMode.ONLINE_ONLY -> document.setMirrored(false)
+          OnlineDocumentMode.OFFLINE_ONLY -> error("Unexpected mode value=$mode at this place")
+        }
       }
     }
   }
@@ -147,9 +177,9 @@ class DocPropertiesUi(val errorUi: ErrorUi, val busyUi: BusyUi) {
   private fun createHistoryPane(): HistoryPaneData {
     val folderView = FolderView(
         exceptionUi = {},
-        cellFactory = this@DocPropertiesUi::createHistoryCell
+        maybeCellFactory = this@DocPropertiesUi::createHistoryCell
     )
-    val vboxBuilder = VBoxBuilder("tab-contents", "history-pane").apply {
+    val vboxBuilder = VBoxBuilder("tab-contents", "section", "history-pane").apply {
       addTitle("cloud.historyPane.title")
       add(Label().also {
         it.textProperty().bind(this.i18n.create("cloud.historyPane.titleHelp"))
@@ -167,7 +197,7 @@ class DocPropertiesUi(val errorUi: ErrorUi, val busyUi: BusyUi) {
       btnGet.addEventHandler(ActionEvent.ACTION) {
         val selected = listView.selectionModel.selectedItem?.resource?.get() ?: return@addEventHandler
         GlobalScope.launch {
-          folderView.document?.fetchVersion(selected.generation)
+          folderView.document?.fetchVersion(selected.generation)?.update()
         }
       }
       add(btnGet, alignment = Pos.CENTER_RIGHT, growth = Priority.NEVER).also {
@@ -228,48 +258,30 @@ class DocPropertiesUi(val errorUi: ErrorUi, val busyUi: BusyUi) {
     }
   }
 
-  fun buildPane(document: GPCloudDocument, onLockDone: OnLockDone): Parent {
+  data class LockOfflinePaneElements(val pane: Parent, val lockToggleGroup: ToggleGroup, val mirrorToggleGroup: ToggleGroup)
+  fun buildPane(document: GPCloudDocument, onLockDone: OnLockDone): LockOfflinePaneElements {
     val lockToggleGroup = ToggleGroup()
-    val lockDurationHandler = lockDurationHandler(document, onLockDone)
 
     val mirrorToggleGroup = ToggleGroup()
-    val mirrorOptionHandler = mirrorOptionHandler(document)
 
     val vboxBuilder = VBoxBuilder("tab-contents").apply {
+      i18n = OFFLINE_MIRROR_LOCALIZER
       add(node = mirrorPaneBuilder(document).let {
         it.toggleGroup = mirrorToggleGroup
         it.styleClass = "section"
         it.buildPane()
       })
-      val btnChangeMode = Button().also {
-        it.textProperty().bind(this.i18n.create("cloud.offlineMirrorOptionPane.btnApply"))
-        it.styleClass.add("btn-small-attention")
-        it.addEventHandler(ActionEvent.ACTION) {
-          val selectedMode = mirrorToggleGroup.selectedToggle.userData as OnlineDocumentMode
-          mirrorOptionHandler(selectedMode)
+
+      val lockNode = if (document.status.value.lockedBySomeone) {
+        createLockWarningPage(document)
+      } else {
+        lockPaneBuilder(document.status.value).let {
+          it.toggleGroup = lockToggleGroup
+          it.styleClass = "section"
+          it.buildPane()
         }
       }
-      add(btnChangeMode, alignment = Pos.CENTER_RIGHT, growth = Priority.NEVER).also {
-        it.styleClass.add("pane-buttons")
-      }
-
-      add(node = lockPaneBuilder().let {
-        it.toggleGroup = lockToggleGroup
-        it.styleClass = "section"
-        it.buildPane()
-      })
-      val btnChangeLock = Button().also {
-        it.textProperty().bind(this.i18n.create("cloud.lockOptionPane.btnApply"))
-        it.styleClass.add("btn-small-attention")
-        it.addEventHandler(ActionEvent.ACTION) {
-          val selectedDuration = lockToggleGroup.selectedToggle.userData as Duration
-          lockDurationHandler(selectedDuration)
-        }
-      }
-      add(btnChangeLock, alignment = Pos.CENTER_RIGHT, growth = Priority.NEVER).also {
-        it.styleClass.add("pane-buttons")
-      }
-
+      add(node = lockNode)
     }
 
     val lockingOffline = Tab("Locking and Offline", vboxBuilder.vbox)
@@ -286,31 +298,34 @@ class DocPropertiesUi(val errorUi: ErrorUi, val busyUi: BusyUi) {
         }
       }
     }
-    return tabPane
+    return LockOfflinePaneElements(tabPane, lockToggleGroup, mirrorToggleGroup)
   }
 
   fun showDialog(document: GPCloudDocument) {
-    Platform.runLater {
-      Dialog<Unit>().also {
-        it.isResizable = true
-        it.dialogPane.apply {
-          content = buildPane(document, {})
-          styleClass.addAll("dlg-lock", "dlg-cloud-file-options")
-          stylesheets.addAll("/biz/ganttproject/storage/cloud/GPCloudStorage.css", "/biz/ganttproject/storage/StorageDialog.css")
+    val lockDurationHandler = lockDurationHandler(document, {})
+    val mirrorOptionHandler = mirrorOptionHandler(document)
+    dialog { dialogController ->
+      val paneElements = buildPane(document, {})
+      dialogController.addStyleClass("dlg-lock")
+      dialogController.addStyleClass("dlg-cloud-file-options")
+      dialogController.addStyleSheet(
+          "/biz/ganttproject/app/TabPane.css",
+          "/biz/ganttproject/storage/cloud/DocPropertiesUi.css",
+          "/biz/ganttproject/storage/StorageDialog.css"
+      )
+      dialogController.setContent(paneElements.pane)
+      dialogController.setupButton(ButtonType.APPLY) {btn ->
+        btn.textProperty().bind(RootLocalizer.create("cloud.offlineMirrorOptionPane.btnApply"))
+        btn.styleClass.add("btn-attention")
+        btn.addEventHandler(ActionEvent.ACTION) {
+          val selectedMode = paneElements.mirrorToggleGroup.selectedToggle.userData as OnlineDocumentMode
+          mirrorOptionHandler(selectedMode)
 
-          val window = scene.window
-          window.onCloseRequest = EventHandler {
-            window.hide()
-          }
-          scene.accelerators[KeyCombination.keyCombination("ESC")] = Runnable { window.hide() }
+          val selectedDuration = paneElements.lockToggleGroup.selectedToggle.userData as Duration
+          lockDurationHandler(selectedDuration)
         }
-        it.onShown = EventHandler { _ ->
-          it.dialogPane.scene.window.sizeToScene()
-        }
-        it.show()
       }
     }
-
   }
 }
 
@@ -333,7 +348,7 @@ class ProjectPropertiesPageProvider : OptionPageProviderBase("project.cloud") {
     if (onlineDocument is GPCloudDocument) {
       val docPropertiesUi = DocPropertiesUi(errorUi = {}, busyUi = {})
       val vboxBuilder = VBoxBuilder("dlg-lock").also {
-        it.add(docPropertiesUi.buildPane(onlineDocument, {}), Pos.CENTER, Priority.ALWAYS)
+        it.add(docPropertiesUi.buildPane(onlineDocument, {}).pane, Pos.CENTER, Priority.ALWAYS)
         it.vbox.stylesheets.addAll("/biz/ganttproject/storage/cloud/GPCloudStorage.css", "/biz/ganttproject/storage/StorageDialog.css")
       }
       return Scene(vboxBuilder.vbox)
@@ -343,7 +358,11 @@ class ProjectPropertiesPageProvider : OptionPageProviderBase("project.cloud") {
   }
 
   private fun buildNotOnlineDocumentScene(): Scene {
-    val signupPane = GPCloudSignupPane(onTokenCallback = { _, _, _, _ -> }, pageSwitcher = {})
+    // TODO: this probably needs to be fixed?
+    val signinPane = SigninPane(onTokenCallback = { _, _, _, _ -> })
+    val signupPane = GPCloudSignupPane(signinPane, pageSwitcher = {})
     return Scene(signupPane.createPane())
   }
 }
+
+private val OFFLINE_MIRROR_LOCALIZER = RootLocalizer.createWithRootKey("cloud.offlineMirrorOptionPane", BROWSE_PANE_LOCALIZER)

@@ -40,13 +40,17 @@ data class OptionElementData<T>(val i18nKey: String, val userData: T, val isSele
  * This is a helper class which builds a UI widget consisting of a few mutually exclusive options where user is supposed
  * to choose one.
  *
- * The widget can be used inside other widgets or shown in a dialog. It thus becomes slightly more adavnced alternative
+ * The widget can be used inside other widgets or shown in a dialog. It thus becomes slightly more advanced alternative
  * to JOptionPane class.
  */
 class OptionPaneBuilder<T> {
-  val i18n = DefaultLocalizer()
-  val titleString = i18n.create("title")
-  val titleHelpString = i18n.create("titleHelp")
+  var i18n = RootLocalizer
+  private val titleString: LocalizedString
+      get() = i18n.create("title")
+
+  var titleHelpString: LocalizedString? = null
+  get() { if (field == null) { field = i18n.create("titleHelp") }; return field }
+
 
   /**
    * Style class added to the widget
@@ -80,7 +84,7 @@ class OptionPaneBuilder<T> {
     val vbox = VBoxBuilder()
     vbox.addTitle(this.titleString.update().value)
     vbox.add(Label().apply {
-      this.textProperty().bind(this@OptionPaneBuilder.titleHelpString.update())
+      this.textProperty().bind(this@OptionPaneBuilder.titleHelpString)
       this.styleClass.add("help")
     })
 
@@ -94,7 +98,7 @@ class OptionPaneBuilder<T> {
       }
       vbox.add(btn)
 
-      if (this.i18n.hasKey("${it.i18nKey}.help")) {
+      if (this.i18n.formatTextOrNull("${it.i18nKey}.help") != null) {
         vbox.add(Label().apply {
           this.textProperty().bind(i18n.create("${it.i18nKey}.help"))
           this.styleClass.add("option-help")
@@ -102,7 +106,9 @@ class OptionPaneBuilder<T> {
       }
       it.customContent?.let { vbox.add(it) }
     }
-    return vbox.vbox
+    return vbox.vbox.also {
+      it.stylesheets.add("/biz/ganttproject/app/OptionPane.css")
+    }
   }
 
   fun buildDialogPane(optionHandler: (T) -> Unit): DialogPane {

@@ -18,15 +18,22 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 package net.sourceforge.ganttproject.client;
 
-import biz.ganttproject.core.option.*;
+import biz.ganttproject.core.option.ChangeValueEvent;
+import biz.ganttproject.core.option.ChangeValueListener;
+import biz.ganttproject.core.option.DateOption;
+import biz.ganttproject.core.option.DefaultBooleanOption;
+import biz.ganttproject.core.option.DefaultDateOption;
+import biz.ganttproject.core.option.DefaultEnumerationOption;
+import biz.ganttproject.core.option.GPOptionGroup;
 import biz.ganttproject.core.time.impl.GPTimeUnitStack;
+import biz.ganttproject.platform.UpdateKt;
+import com.bardsoftware.eclipsito.update.Updater;
 import net.sourceforge.ganttproject.GPLogger;
 import net.sourceforge.ganttproject.GPVersion;
 import net.sourceforge.ganttproject.gui.NotificationChannel;
 import net.sourceforge.ganttproject.gui.NotificationItem;
 import net.sourceforge.ganttproject.gui.NotificationManager;
 import net.sourceforge.ganttproject.gui.UIFacade;
-import net.sourceforge.ganttproject.gui.update.UpdateDialog;
 import net.sourceforge.ganttproject.language.GanttLanguage;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
@@ -48,10 +55,13 @@ import java.util.List;
  * @author dbarashev (Dmitry Barashev)
  */
 public class RssFeedChecker {
+
+
   private static enum CheckOption {
-    YES, NO, UNDEFINED
+    YES, NO, UNDEFINED;
   }
 
+  private Updater myUpdater;
   private final UIFacade myUiFacade;
   private final DefaultEnumerationOption<CheckOption> myCheckRssOption = new DefaultEnumerationOption<CheckOption>(
       "check", CheckOption.values()) {
@@ -72,6 +82,7 @@ public class RssFeedChecker {
   private final GPOptionGroup myUiOptionGroup = new GPOptionGroup("rss", myBooleanCheckRssOption);
   private GPTimeUnitStack myTimeUnitStack;
   private static final String RSS_URL = "http://www.ganttproject.biz/my/feed";
+  public static final String UPDATE_URL = "http://dl.ganttproject.biz/updates/ganttproject-3.0.json";
   protected static final int MAX_ATTEMPTS = 10;
   private final RssParser parser = new RssParser();
   private final NotificationItem myRssProposalNotification = new NotificationItem("",
@@ -79,7 +90,7 @@ public class RssFeedChecker {
           GanttLanguage.getInstance().getText("updateRss.question.0"),
           GanttLanguage.getInstance().getText("updateRss.question.1"),
           GanttLanguage.getInstance().getText("updateRss.question.2")),
-          NotificationManager.DEFAULT_HYPERLINK_LISTENER);
+      NotificationManager.DEFAULT_HYPERLINK_LISTENER);
   private String myOptionsVersion;
 
   public RssFeedChecker(GPTimeUnitStack timeUnitStack, UIFacade uiFacade) {
@@ -122,6 +133,15 @@ public class RssFeedChecker {
   }
 
   public void run() {
+    myUpdater.getUpdateMetadata(UPDATE_URL).thenAccept(updateMetadata -> {
+      if (!updateMetadata.isEmpty()) {
+        UpdateKt.showUpdateDialog(updateMetadata, myUiFacade, false);
+      }
+    }).exceptionally(ex -> {
+      GPLogger.log(ex);
+      return null;
+    });
+
     Runnable command = null;
     CheckOption checkOption = CheckOption.valueOf(myCheckRssOption.getValue());
     if (CheckOption.NO == checkOption) {
@@ -179,9 +199,9 @@ public class RssFeedChecker {
           for (int i = 0; i < MAX_ATTEMPTS; i++) {
             HttpResponse result = httpClient.execute(getRssUrl);
             switch (result.getStatusLine().getStatusCode()) {
-            case HttpStatus.SC_OK:
-              processResponse(result.getEntity().getContent());
-              return;
+              case HttpStatus.SC_OK:
+                processResponse(result.getEntity().getContent());
+                return;
             }
           }
         } catch (MalformedURLException e) {
@@ -230,10 +250,10 @@ public class RssFeedChecker {
   }
 
   private void createUpdateDialog(String content) {
-    RssUpdate update = parser.parseUpdate(content);
-    if (update != null) {
-      UpdateDialog.show(myUiFacade, update);
-    }
+//    RssUpdate update = parser.parseUpdate(content);
+//    if (update != null) {
+//      UpdateDialog.show(myUiFacade, update);
+//    }
   }
 
   private boolean wasToday(Date date) {
@@ -251,4 +271,13 @@ public class RssFeedChecker {
   public void setOptionsVersion(String version) {
     myOptionsVersion = version;
   }
+
+  public void setUpdater(Updater updater) {
+    myUpdater = updater;
+  }
+
+  public Updater getUpdater() {
+    return myUpdater;
+  }
+
 }

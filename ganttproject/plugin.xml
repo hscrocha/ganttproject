@@ -6,16 +6,7 @@
         provider-name="">
 
     <runtime>
-        <library name="ganttproject.jar">
-            <export name="*"/>
-        </library>
-        <library name="lib/mvn/*">
-            <export name="*"/>
-        </library>
-        <library name="lib/javafx/*">
-            <export name="*"/>
-        </library>
-        <library name="lib/core/*">
+        <library name="lib/*">
             <export name="*"/>
         </library>
         <library name="data/resources/">
@@ -25,7 +16,9 @@
     <requires>
         <import plugin="org.eclipse.core.runtime"/>
         <import plugin="biz.ganttproject.core"/>
+        <import plugin="biz.ganttproject.app.libs"/>
     </requires>
+    <extension-point id="l10n" name="LocalizationBundle"/>
     <extension-point id="exporter" name="Exporter"/>
     <extension-point id="importer" name="Importer"/>
     <extension-point id="chart" name="Chart"/>
@@ -49,6 +42,7 @@
     </extension>
     <extension point="net.sourceforge.ganttproject.OptionPageProvider">
         <optionpageprovider class="biz.ganttproject.storage.cloud.ProjectPropertiesPageProvider"/>
+        <optionpageprovider class="biz.ganttproject.platform.PlatformOptionPageProvider"/>
         <optionpageprovider class="net.sourceforge.ganttproject.gui.options.ExportCsvOptionPageProvider"/>
         <optionpageprovider class="net.sourceforge.ganttproject.gui.options.GanttChartOptionPageProvider"/>
         <optionpageprovider class="net.sourceforge.ganttproject.gui.options.InterfaceOptionPageProvider"/>

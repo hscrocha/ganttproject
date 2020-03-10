@@ -21,6 +21,7 @@ package net.sourceforge.ganttproject.gui
 
 import biz.ganttproject.app.OptionElementData
 import biz.ganttproject.app.OptionPaneBuilder
+import biz.ganttproject.app.RootLocalizer
 import biz.ganttproject.core.option.DefaultEnumerationOption
 import biz.ganttproject.core.time.TimeDuration
 import biz.ganttproject.storage.FetchResult
@@ -35,6 +36,7 @@ import javafx.beans.value.ObservableValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Runnable
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import net.sourceforge.ganttproject.GPLogger
 import net.sourceforge.ganttproject.IGanttProject
@@ -100,12 +102,20 @@ internal class ProjectOpenStrategy(project: IGanttProject, uiFacade: UIFacade) :
     }
   }
 
-  fun open(document: Document, offlineTail: (Document) -> Unit) {
-    val online = document.asOnlineDocument() ?: return offlineTail(document)
-    GlobalScope.launch(Dispatchers.Main) {
-      val currentFetch = online.fetchResultProperty.get() ?: online.fetch()
-      if (processFetchResult(currentFetch)) {
-        offlineTail(document)
+  suspend fun open(document: Document, successChannel: Channel<Document>) {
+    GlobalScope.launch(Dispatchers.IO) {
+      val online = document.asOnlineDocument()
+      if (online == null) {
+        successChannel.send(document)
+      } else {
+        try {
+          val currentFetch = online.fetchResultProperty.get() ?: online.fetch().also { it.update() }
+          if (processFetchResult(currentFetch)) {
+            successChannel.send(document)
+          }
+        } catch (ex: Exception) {
+          successChannel.close(ex)
+        }
       }
     }
   }
@@ -142,7 +152,7 @@ internal class ProjectOpenStrategy(project: IGanttProject, uiFacade: UIFacade) :
 
   private fun showOfflineIsAheadDialog(continuation: Continuation<Boolean>, fetchResult: FetchResult) {
     OptionPaneBuilder<OpenOnlineDocumentChoice>().run {
-      i18n.rootKey = "cloud.openWhenOfflineIsAhead"
+      i18n = RootLocalizer.createWithRootKey(rootKey = "cloud.openWhenOfflineIsAhead")
       styleClass = "dlg-lock"
       styleSheets.add("/biz/ganttproject/storage/cloud/GPCloudStorage.css")
       styleSheets.add("/biz/ganttproject/storage/StorageDialog.css")
@@ -172,7 +182,7 @@ internal class ProjectOpenStrategy(project: IGanttProject, uiFacade: UIFacade) :
 
   private fun showForkDialog(continuation: Continuation<Boolean>, fetchResult: FetchResult) {
     OptionPaneBuilder<OpenOnlineDocumentChoice>().run {
-      i18n.rootKey = "cloud.openWhenDiverged"
+      i18n = RootLocalizer.createWithRootKey(rootKey = "cloud.openWhenDiverged")
       styleClass = "dlg-lock"
       styleSheets.add("/biz/ganttproject/storage/cloud/GPCloudStorage.css")
       styleSheets.add("/biz/ganttproject/storage/StorageDialog.css")

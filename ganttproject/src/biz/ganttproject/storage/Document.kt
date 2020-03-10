@@ -18,6 +18,7 @@ along with GanttProject.  If not, see <http://www.gnu.org/licenses/>.
 */
 package biz.ganttproject.storage
 
+import biz.ganttproject.storage.cloud.GPCloudOptions
 import com.fasterxml.jackson.databind.JsonNode
 import com.google.common.hash.Hashing
 import com.google.common.io.ByteStreams
@@ -154,7 +155,10 @@ data class LockStatus(val locked: Boolean,
                       val lockOwnerName: String? = null,
                       val lockOwnerEmail: String? = null,
                       val lockOwnerId: String? = null,
-                      val raw: JsonNode? = null)
+                      val raw: JsonNode? = null) {
+  val lockedBySomeone: Boolean get() = locked && (lockOwnerId != GPCloudOptions.userId.value)
+  val lockExpiration: Long get() = raw?.get("expirationEpochTs")?.longValue() ?: -1
+}
 
 interface LockableDocument {
   fun toggleLocked(duration: Duration?): CompletableFuture<LockStatus>
@@ -164,6 +168,7 @@ interface LockableDocument {
 
 class NetworkUnavailableException(cause: Exception) : RuntimeException(cause)
 class VersionMismatchException : RuntimeException()
+class ForbiddenException : RuntimeException()
 
 enum class OnlineDocumentMode {
   ONLINE_ONLY, MIRROR, OFFLINE_ONLY
@@ -174,15 +179,20 @@ data class FetchResult(val onlineDocument: OnlineDocument,
                        val syncVersion: Long,
                        val actualChecksum: String,
                        val actualVersion: Long,
-                       val body: ByteArray) {
+                       val body: ByteArray,
+                       val updateFxn: (FetchResult)->Unit = {}) {
   var useMirror: Boolean = false
+  fun update() = updateFxn(this)
 }
+
+data class LatestVersion(val timestamp: Long, val author: String)
 
 interface OnlineDocument {
   var offlineMirror: Document?
   val isMirrored: ObservableBooleanValue
   val mode: ObjectProperty<OnlineDocumentMode>
   val fetchResultProperty: ObservableObjectValue<FetchResult?>
+  val latestVersionProperty: ObservableObjectValue<LatestVersion>
 
   fun setMirrored(mirrored: Boolean)
   suspend fun fetch(): FetchResult

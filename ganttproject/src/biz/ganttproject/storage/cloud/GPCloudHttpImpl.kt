@@ -19,9 +19,7 @@ along with GanttProject.  If not, see <http://www.gnu.org/licenses/>.
 package biz.ganttproject.storage.cloud
 
 import biz.ganttproject.storage.DocumentUri
-import biz.ganttproject.storage.FolderItem
 import biz.ganttproject.storage.Path
-import biz.ganttproject.storage.StorageDialogBuilder
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ArrayNode
@@ -43,6 +41,7 @@ import okhttp3.*
 import org.apache.commons.codec.binary.Base64InputStream
 import org.apache.http.HttpHost
 import org.apache.http.HttpResponse
+import org.apache.http.HttpStatus
 import org.apache.http.auth.AuthScope
 import org.apache.http.auth.UsernamePasswordCredentials
 import org.apache.http.client.HttpClient
@@ -75,6 +74,7 @@ import java.util.function.Consumer
 import java.util.function.Predicate
 import java.util.logging.Level
 
+class GPCloudException(val status: Int) : Exception()
 /**
  * Background tasks which communicate with GP Cloud server and load
  * user team and project list.
@@ -83,12 +83,12 @@ import java.util.logging.Level
  */
 
 // Create LoadTask or CachedTask depending on whether we have cached response from GP Cloud or not
-class LoaderService(private val dialogUi: StorageDialogBuilder.DialogUi) : Service<ObservableList<FolderItem>>() {
+class LoaderService<T: CloudJsonAsFolderItem> : Service<ObservableList<T>>() {
   var busyIndicator: Consumer<Boolean> = Consumer {}
   var path: Path = DocumentUri(listOf(), true, "GanttProject Cloud")
   var jsonResult: SimpleObjectProperty<JsonNode> = SimpleObjectProperty()
 
-  override fun createTask(): Task<ObservableList<FolderItem>> {
+  override fun createTask(): Task<ObservableList<T>> {
     if (jsonResult.value == null) {
       return LoaderTask(busyIndicator, this.path, this.jsonResult)
     } else {
@@ -122,22 +122,23 @@ fun filterProjects(teams: List<JsonNode>, filter: Predicate<JsonNode>): List<Jso
 }
 
 // Processes cached response from GP Cloud
-class CachedTask(val path: Path, private val jsonNode: Property<JsonNode>) : Task<ObservableList<FolderItem>>() {
-  override fun call(): ObservableList<FolderItem> {
-    return FXCollections.observableArrayList(
-        when (path.getNameCount()) {
-          0 -> filterTeams(jsonNode.value, Predicate { true }).map(::TeamJsonAsFolderItem)
-          1 -> {
-            filterProjects(
-                filterTeams(jsonNode.value, Predicate { it["name"].asText() == path.getName(0).toString() }),
-                Predicate { true }
-            ).map(::ProjectJsonAsFolderItem)
-          }
-          else -> emptyList()
-        })
+class CachedTask<T: CloudJsonAsFolderItem>(val path: Path, private val jsonNode: Property<JsonNode>) : Task<ObservableList<T>>() {
+  override fun call(): ObservableList<T> {
+    val list: List<CloudJsonAsFolderItem> = when (path.getNameCount()) {
+      0 -> filterTeams(jsonNode.value, Predicate { true }).map(::TeamJsonAsFolderItem)
+      1 -> {
+        filterProjects(
+            filterTeams(jsonNode.value, Predicate { it["name"].asText() == path.getName(0).toString() }),
+            Predicate { true }
+        ).map(::ProjectJsonAsFolderItem)
+      }
+      else -> emptyList()
+    }
+    return FXCollections.observableArrayList(list as List<T>)
+
   }
 
-  fun callPublic(): ObservableList<FolderItem> {
+  fun callPublic(): ObservableList<T> {
     return this.call()
   }
 }
@@ -145,10 +146,11 @@ class CachedTask(val path: Path, private val jsonNode: Property<JsonNode>) : Tas
 class OfflineException(cause: Exception) : RuntimeException(cause)
 
 // Sends HTTP request to GP Cloud and returns a list of teams.
-class LoaderTask(private val busyIndicator: Consumer<Boolean>,
-                 val path: Path,
-                 private val resultStorage: Property<JsonNode>) : Task<ObservableList<FolderItem>>() {
-  override fun call(): ObservableList<FolderItem>? {
+class LoaderTask<T: CloudJsonAsFolderItem>(
+    private val busyIndicator: Consumer<Boolean>,
+    val path: Path,
+    private val resultStorage: Property<JsonNode>) : Task<ObservableList<T>>() {
+  override fun call(): ObservableList<T>? {
     busyIndicator.accept(true)
     val log = GPLogger.getLogger("GPCloud")
     val http = HttpClientBuilder.buildHttpClientApache()
@@ -165,17 +167,15 @@ class LoaderTask(private val busyIndicator: Consumer<Boolean>,
                 "Failed to get team list. Response code=${resp.statusLine.statusCode} reason=${resp.statusLine.reasonPhrase}")
             fine(EntityUtils.toString(resp.entity))
           }
-          throw IOException("Server responded with HTTP ${resp.statusLine.statusCode}")
+          throw GPCloudException(resp.statusLine.statusCode)
         }
       }
-      println("Team list:\n$jsonBody")
-
       val jsonNode = OBJECT_MAPPER.readTree(jsonBody)
       resultStorage.value = jsonNode
-      CachedTask(this.path, this.resultStorage).callPublic()
+      CachedTask<T>(this.path, this.resultStorage).callPublic()
     } catch (ex: IOException) {
       log.log(Level.SEVERE, "Failed to contact ${http.host}", ex)
-      throw OfflineException(ex)
+      throw GPCloudException(HttpStatus.SC_SERVICE_UNAVAILABLE)
     }
 
   }
@@ -296,6 +296,8 @@ class WebSocketListenerImpl : WebSocketListener() {
   private var webSocket: WebSocket? = null
   private val structureChangeListeners = mutableListOf<(Any) -> Unit>()
   private val lockStatusChangeListeners = mutableListOf<(ObjectNode) -> Unit>()
+  private val contentChangeListeners = mutableListOf<(ObjectNode) -> Unit>()
+
   internal val token: String?
     get() = GPCloudOptions.websocketAuthToken
   lateinit var onAuthCompleted: () -> Unit
@@ -318,11 +320,11 @@ class WebSocketListenerImpl : WebSocketListener() {
   override fun onMessage(webSocket: WebSocket?, text: String?) {
     val payload = OBJECT_MAPPER.readTree(text)
     if (payload is ObjectNode) {
-      println("WebSocket message:\n$payload")
+      LOG.debug("WebSocket message:\n{}", payload)
       payload.get("type")?.textValue()?.let {
-        println("type=$it")
         when (it) {
           "ProjectLockStatusChange" -> onLockStatusChange(payload)
+          "ProjectChange", "ProjectRevert" -> onProjectContentsChange(payload)
           else -> onStructureChange(payload)
         }
       }
@@ -341,8 +343,13 @@ class WebSocketListenerImpl : WebSocketListener() {
     }
   }
 
+  private fun onProjectContentsChange(payload: ObjectNode) {
+    LOG.debug("ProjectChange: {}", payload)
+    this.contentChangeListeners.forEach { it(payload) }
+  }
+
   override fun onClosed(webSocket: WebSocket?, code: Int, reason: String?) {
-    println("WebSocket closed")
+    LOG.debug("WebSocket closed")
   }
 
   override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -359,6 +366,10 @@ class WebSocketListenerImpl : WebSocketListener() {
     this.lockStatusChangeListeners.add(listener)
   }
 
+  fun addOnContentChange(listener: (ObjectNode) -> Unit) {
+    this.contentChangeListeners.add(listener)
+  }
+
 }
 
 class WebSocketClient {
@@ -372,7 +383,7 @@ class WebSocketClient {
     if (isStarted) {
       return
     }
-    val req = Request.Builder().url("wss://ws.ganttproject.biz").build()
+    val req = Request.Builder().url(GPCLOUD_WEBSOCKET_URL).build()
     this.wsListener.onAuthCompleted = {
       this.heartbeatExecutor.scheduleAtFixedRate(this::sendHeartbeat, 30, 60, TimeUnit.SECONDS)
     }
@@ -388,6 +399,10 @@ class WebSocketClient {
     return this.wsListener.addOnLockStatusChange(listener)
   }
 
+  fun onContentChange(listener: (ObjectNode) -> Unit) {
+    return this.wsListener.addOnContentChange(listener)
+  }
+
   fun sendHeartbeat() {
     this.websocket.send("HB")
   }
@@ -395,8 +410,13 @@ class WebSocketClient {
 
 val webSocket = WebSocketClient()
 
+// HTTP server for sign in into GP Cloud
+typealias AuthTokenCallback = (token: String?, validity: String?, userId: String?, websocketToken: String?) -> Unit
+typealias AuthStartCallback = ()->Unit
+
 class HttpServerImpl : NanoHTTPD("localhost", 0) {
   var onTokenReceived: AuthTokenCallback? = null
+  var onStart: AuthStartCallback? = null
 
   private fun getParam(session: IHTTPSession, key: String): String? {
     val values = session.parameters[key]
@@ -406,15 +426,31 @@ class HttpServerImpl : NanoHTTPD("localhost", 0) {
   override fun serve(session: IHTTPSession): Response {
     val args = mutableMapOf<String, String>()
     session.parseBody(args)
-    val token = getParam(session, "token")
-    val userId = getParam(session, "userId")
-    val validity = getParam(session, "validity")
-    val websocketToken = getParam(session, "websocketToken")
+    return when (session.uri) {
+      "/auth" -> {
+        val token = getParam(session, "token")
+        val userId = getParam(session, "userId")
+        val validity = getParam(session, "validity")
+        val websocketToken = getParam(session, "websocketToken")
 
-    onTokenReceived?.invoke(token, validity, userId, websocketToken)
-    val resp = newFixedLengthResponse("")
-    resp.addHeader("Access-Control-Allow-Origin", GPCLOUD_ORIGIN)
-    return resp
+        onTokenReceived?.invoke(token, validity, userId, websocketToken)
+        newFixedLengthResponse("").apply {
+          addHeader("Access-Control-Allow-Origin", GPCLOUD_ORIGIN)
+        }
+      }
+      "/start" -> {
+        onStart?.invoke()
+        newFixedLengthResponse("").apply {
+          addHeader("Access-Control-Allow-Origin", GPCLOUD_ORIGIN)
+        }
+      }
+      else -> {
+        println("Unknown URI: ${session.uri}")
+        newFixedLengthResponse(Response.Status.NOT_FOUND, NanoHTTPD.MIME_PLAINTEXT, "").apply {
+          addHeader("Access-Control-Allow-Origin", GPCLOUD_ORIGIN)
+        }
+      }
+    }
   }
 }
 
@@ -509,3 +545,4 @@ fun isNetworkAvailable(): Boolean {
     false
   }
 }
+private val LOG = GPLogger.create("Cloud.Http")

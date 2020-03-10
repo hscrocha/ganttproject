@@ -47,12 +47,15 @@ interface FolderItem {
   val isDirectory: Boolean
   // Is it possible to change lock state: unlock if locked or lock if unlocked
   val canChangeLock: Boolean
+  // Item tags, indicating whether item is local, is read-only, etc
+  val tags: List<String>
 }
 
 private val unsupported = SimpleBooleanProperty(false)
 
-private typealias CellFactory<T> = () -> ListCell<ListViewItem<T>>
-private typealias ExceptionUi = (Exception) -> Unit
+typealias CellFactory<R> = () -> ListCell<ListViewItem<R>>
+typealias ExceptionUi = (Exception) -> Unit
+
 /**
  * Encapsulates a list view showing the contents of a single folder.
  */
@@ -62,11 +65,12 @@ class FolderView<T : FolderItem>(
     onToggleLockResource: Consumer<T> = Consumer {  },
     isLockingSupported: BooleanProperty = unsupported,
     isDeleteSupported: ReadOnlyBooleanProperty = unsupported,
-    private val itemActionFactory: ItemActionFactory = Function { Collections.emptyMap() },
-    private val cellFactory: CellFactory<T> = {
-      createListCell(exceptionUi, onDeleteResource, onToggleLockResource, isLockingSupported, isDeleteSupported, itemActionFactory)
-    }) {
+    private val itemActionFactory: ItemActionFactory<T> = Function { Collections.emptyMap() },
+    maybeCellFactory: CellFactory<T>? = null) {
 
+  private val cellFactory: CellFactory<T> = maybeCellFactory ?: {
+    createListCell(exceptionUi, onDeleteResource, onToggleLockResource, isLockingSupported, isDeleteSupported, itemActionFactory)
+  }
   var document: OnlineDocument? = null
   var myContents: ObservableList<T> = FXCollections.observableArrayList()
   val listView: ListView<ListViewItem<T>> = ListView()
@@ -164,7 +168,7 @@ fun <T : FolderItem> createListCell(
     onToggleLockResource: Consumer<T>,
     isLockingSupported: BooleanProperty,
     isDeleteSupported: ReadOnlyBooleanProperty,
-    itemActionFactory: ItemActionFactory): ListCell<ListViewItem<T>> {
+    itemActionFactory: ItemActionFactory<T>): ListCell<ListViewItem<T>> {
   return object : ListCell<ListViewItem<T>>() {
     override fun updateItem(item: ListViewItem<T>?, empty: Boolean) {
       try {
@@ -335,7 +339,7 @@ class BreadcrumbView(initialPath: Path, private val onSelectCrumb: Consumer<Path
   fun append(name: String) {
     val selectedPath = breadcrumbs.selectedCrumb.value.path
     val appendPath = selectedPath.resolve(name)
-    val treeItem = TreeItem<BreadcrumbNode>(BreadcrumbNode(appendPath, name))
+    val treeItem = TreeItem(BreadcrumbNode(appendPath, name))
     breadcrumbs.selectedCrumb.children.add(treeItem)
     breadcrumbs.selectedCrumb = treeItem
     onSelectCrumb.accept(appendPath)
@@ -384,7 +388,7 @@ fun <T : FolderItem> connect(
     // Filter folder with user text and map each item to its name. Return the result if
     // filtered list has less than 5 items.
     listView.doFilter(req.userText).let {
-      if (it.size <= 5) it.map { it.name }.toList() else emptyList<String>()
+      if (it.size <= 5) it.map { it.name }.toList() else emptyList()
     }
   }
   filename?.onKeyPressed = EventHandler { keyEvent ->
