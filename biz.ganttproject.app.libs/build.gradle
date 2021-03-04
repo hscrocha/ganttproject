@@ -1,26 +1,16 @@
 buildscript {
-    ext.kotlin_version = '1.3.+'
     repositories {
         mavenCentral()
         maven {
             url "https://plugins.gradle.org/m2/"
         }
     }
-    dependencies {
-        classpath 'org.openjfx:javafx-plugin:0.0.+'
-    }
 }
 
 apply plugin: 'java'
-apply plugin: 'org.openjfx.javafxplugin'
-
 
 ext {
     libDir = 'lib'
-}
-
-javafx {
-    modules = ['javafx.controls', 'javafx.swing']
 }
 
 configurations {
@@ -28,31 +18,34 @@ configurations {
 }
 
 dependencies {
-    exported 'commons-codec:commons-codec:1.10'
-    exported 'org.apache.poi:poi:3.17'
+    exported 'org.slf4j:slf4j-api:1.7.30'
+    compile 'org.slf4j:slf4j-jdk14:1.7.30'
 
-    exported 'commons-io:commons-io:2.4'
+    exported 'commons-codec:commons-codec:1.+'
+    exported 'commons-io:commons-io:2.+'
 
     exported 'com.googlecode.concurrentlinkedhashmap:concurrentlinkedhashmap-lru:1.4.2'
     exported 'com.evanlennick:retry4j:0.+'
-    exported 'com.fasterxml.jackson.core:jackson-core:2.9.+'
-    exported 'com.fasterxml.jackson.core:jackson-databind:2.9.+'
-    exported 'com.jgoodies:jgoodies-common:1.7.0'
-    exported 'com.jgoodies:jgoodies-looks:2.5.3'
+    exported 'com.fasterxml.jackson.core:jackson-core:2.11.+'
+    exported 'com.fasterxml.jackson.core:jackson-databind:2.11.+'
+    exported 'com.jgoodies:jgoodies-common:1.8.+'
+    exported 'com.jgoodies:jgoodies-looks:2.7.+'
     exported 'com.sandec:mdfx:0.+'
     exported 'com.squareup.okhttp3:okhttp:3.+'
 
     exported 'de.jensd:fontawesomefx-commons:11.+'
     exported 'de.jensd:fontawesomefx-fontawesome:4.7.0-11'
+    exported 'de.jensd:fontawesomefx-materialicons:2.2.0-11'
 
     exported 'net.java.balloontip:balloontip:1.2.4.1'
+    exported 'org.apache.commons:commons-lang3:3.+'
 
-    exported 'org.apache.httpcomponents:httpclient:4.5.6'
-    exported 'org.apache.httpcomponents:httpmime:4.5.6'
+    exported 'org.apache.httpcomponents:httpclient:4.5.+'
+    exported 'org.apache.httpcomponents:httpmime:4.5.+'
+    exported 'org.apache.poi:poi:4.+'
     exported 'org.controlsfx:controlsfx:11.+'
     exported 'org.nanohttpd:nanohttpd:2.3.+'
     exported 'org.jdom:jdom:1.+'
-    exported 'org.slf4j:slf4j-api:1.7.+'
     exported 'org.swinglabs:jxlayer:3.0.4'
 
     exported fileTree(dir: project.ext.libDir, include: ['*.jar'])
@@ -72,9 +65,18 @@ task copyPluginFiles(dependsOn: jar) {
             into(new File(rootProject.pluginsDir, "${project.name}/lib"))
             from(configurations.exported) {
                 include "*.jar"
+                exclude "javafx*.jar"
             }
-            rename { filename -> filename + ".lib" }
         }
+        if (project.hasProperty("withJavafx")) {
+            copy {
+                into(new File(rootProject.pluginsDir, "${project.name}/lib"))
+                from(fileTree("javafx")) {
+                    include "*"
+                }
+            }
+        }
+
         println "<<< $project.name"
     }
 }

@@ -3,20 +3,9 @@ apply plugin: 'idea'
 
 dependencies {
     providedCompile project(path: ':ganttproject', configuration: 'exported')
-    compile group: 'com.itextpdf', name: 'itextpdf', version: '5.3.1'
+    compile group: 'com.itextpdf', name: 'itextpdf', version: '5.+'
 
     compile configurations.providedCompile
-}
-
-
-sourceSets {
-    main {
-        java {
-            srcDir 'src'
-        }
-        resources {
-        }
-    }
 }
 
 task copyPlugin(dependsOn: assemble) {
@@ -26,7 +15,9 @@ task copyPlugin(dependsOn: assemble) {
             into(new File(rootProject.pluginsDir, project.name))
             from(fileTree(".")) {
                 include "plugin.xml"
-                include "resource/**"
+            }
+            from(fileTree("src/main")) {
+                include "resources/**"
             }
         }
         copy {

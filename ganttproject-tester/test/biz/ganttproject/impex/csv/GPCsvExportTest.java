@@ -9,6 +9,7 @@ import net.sourceforge.ganttproject.CustomPropertyDefinition;
 import net.sourceforge.ganttproject.CustomPropertyManager;
 import net.sourceforge.ganttproject.GanttTask;
 import net.sourceforge.ganttproject.io.CSVOptions;
+import net.sourceforge.ganttproject.language.GanttLanguage;
 import net.sourceforge.ganttproject.resource.HumanResource;
 import net.sourceforge.ganttproject.resource.HumanResourceManager;
 import net.sourceforge.ganttproject.roles.RoleManager;
@@ -18,18 +19,20 @@ import net.sourceforge.ganttproject.task.Task;
 import net.sourceforge.ganttproject.task.TaskManager;
 import net.sourceforge.ganttproject.test.task.TaskTestCase;
 import org.apache.commons.csv.CSVFormat;
-import org.junit.Ignore;
 
 import java.awt.*;
 import java.io.ByteArrayOutputStream;
+import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 import static biz.ganttproject.impex.csv.SpreadsheetFormat.CSV;
 
 /**
  * @author dbarashev@bardsoftware.com
  */
-@Ignore
+
 public class GPCsvExportTest extends TaskTestCase {
   @Override
   protected void setUp() throws Exception {
@@ -48,9 +51,10 @@ public class GPCsvExportTest extends TaskTestCase {
         CustomPropertyManager.PropertyTypeEncoder.encodeFieldType(String.class), "prop2", null);
     CustomPropertyDefinition prop3 = hrManager.getCustomPropertyManager().createDefinition(
         CustomPropertyManager.PropertyTypeEncoder.encodeFieldType(String.class), "prop3", null);
-    hrManager.add(new HumanResource("HR1", 1, hrManager));
-    hrManager.add(new HumanResource("HR2", 2, hrManager));
-    hrManager.add(new HumanResource("HR3", 3, hrManager));
+    hrManager.create("HR1", 1);
+    hrManager.create("HR2", 2);
+    hrManager.create("HR3", 3);
+
     hrManager.getById(1).addCustomProperty(prop3, "1");
     hrManager.getById(2).addCustomProperty(prop2, "2");
     hrManager.getById(3).addCustomProperty(prop1, "3");
@@ -62,7 +66,7 @@ public class GPCsvExportTest extends TaskTestCase {
     }
     String[] lines = new String(outputStream.toByteArray(), Charsets.UTF_8.name()).split("\\n");
     assertEquals(7, lines.length);
-    assertEquals("ID,prop1,prop2,prop3", lines[3].trim());
+    assertEquals("tableColID,prop1,prop2,prop3", lines[3].trim());
     assertEquals("1,,,1", lines[4].trim());
     assertEquals("2,,2,", lines[5].trim());
     assertEquals("3,3,,", lines[6].trim());
@@ -117,20 +121,30 @@ public class GPCsvExportTest extends TaskTestCase {
     task2.getAssignmentCollection().addAssignment(alice).setLoad(45.457f);
     task2.getAssignmentCollection().addAssignment(bob);
 
-    GanttCSVExport exporter = new GanttCSVExport(taskManager, hrManager, new RoleManagerImpl(), csvOptions);
-    ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-    try (SpreadsheetWriter writer = new CsvWriterImpl(outputStream, CSVFormat.DEFAULT)) {
-      exporter.save(writer);
-    }
-    String[] lines = new String(outputStream.toByteArray(), Charsets.UTF_8.name()).split("\\n");
+    Callable<String[]> exportJob = () -> {
+      GanttCSVExport exporter = new GanttCSVExport(taskManager, hrManager, new RoleManagerImpl(), csvOptions);
+      ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+      try (SpreadsheetWriter writer = new CsvWriterImpl(outputStream, CSVFormat.DEFAULT)) {
+        exporter.save(writer);
+      }
+      return new String(outputStream.toByteArray(), Charsets.UTF_8.name()).split("\\n");
+    };
 
-    assertEquals(9, lines.length);
-    assertEquals("tableColID,resources,Assignments", lines[0].trim());
-    assertEquals("0,Alice,1:100.00", lines[1].trim());
-    assertEquals("1,Alice;Bob,1:45.46;2:0.00", lines[2].trim());
-    assertEquals("2,,", lines[3].trim());
+    Consumer<String[]> verifier = lines -> {
+      assertEquals(9, lines.length);
+      assertEquals("tableColID,resources,Assignments", lines[0].trim());
+      assertEquals("0,Alice,1:100.00", lines[1].trim());
+      assertEquals("1,Alice;Bob,1:45.46;2:0.00", lines[2].trim());
+      assertEquals("2,,", lines[3].trim());
+    };
 
+    verifier.accept(exportJob.call());
+
+    // Change the locale to test decimal separators.
+    GanttLanguage.getInstance().setLocale(Locale.forLanguageTag("ru-RU"));
+    verifier.accept(exportJob.call());
   }
+
   public void testTaskColor() throws Exception {
     TaskManager taskManager = getTaskManager();
     GanttTask task0 = taskManager.createTask();

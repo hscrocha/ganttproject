@@ -1,21 +1,19 @@
 // This installs dependencyUpdates plugin
 // Run gradle dependencyUpdates to get the report
-apply plugin: 'java'
-apply plugin: 'eclipse'
 
 // Path to launch4j binary
 ext.launch4j = '/opt/launch4j/launch4j'
 // Directories where we build the distro
-ext.semver = '3.0.0'
+ext.semver = '3.0'
 ext.distBinDir = file('ganttproject-builder/dist-bin')
 ext.pluginsDir = file("ganttproject-builder/dist-bin/plugins/base")
 ext.buildNum = getBuildNum()
 
-archivesBaseName = 'ganttproject'
-version = "${semver}-r${getBuildNum()}"
+version = "${semver}.${getBuildNum()}"
+
 
 def getBuildNum() {
-    return "3000"
+    return "2919"
 /*
   def stdout = new ByteArrayOutputStream()
     exec {
@@ -43,7 +41,6 @@ allprojects {
 
     }
     apply plugin: 'java'
-    apply plugin: 'eclipse'
     ext {
         libDir = 'lib'
         mvnDir = 'lib/mvn'
@@ -56,7 +53,22 @@ allprojects {
     }
 }
 
+subprojects {
+    group 'biz.ganttproject'
+    version = new Date().format("yy.MM.dd")
+}
 
+
+def addPublishing(project) {
+    project.publishing {
+        repositories {
+            maven {
+                name "ganttproject-maven-repository-internal"
+                url "gcs://ganttproject-maven-repository/internal"
+            }
+        }
+    }
+}
 //
 //runtime {
 //    distDir = rootProject.distBinDir

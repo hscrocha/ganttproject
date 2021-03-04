@@ -18,6 +18,8 @@ along with GanttProject.  If not, see <http://www.gnu.org/licenses/>.
 */
 package biz.ganttproject.impex.csv;
 
+import biz.ganttproject.app.DefaultLocalizer;
+import biz.ganttproject.app.InternationalizationKt;
 import biz.ganttproject.core.model.task.TaskDefaultColumn;
 import com.google.common.base.Charsets;
 import com.google.common.base.Function;
@@ -26,6 +28,7 @@ import com.google.common.base.Supplier;
 import com.google.common.collect.Maps;
 import junit.framework.TestCase;
 import net.sourceforge.ganttproject.CustomPropertyDefinition;
+import net.sourceforge.ganttproject.ResourceDefaultColumn;
 import net.sourceforge.ganttproject.TestSetupHelper;
 import net.sourceforge.ganttproject.TestSetupHelper.TaskManagerBuilder;
 import net.sourceforge.ganttproject.language.GanttLanguage;
@@ -38,13 +41,15 @@ import net.sourceforge.ganttproject.task.TaskContainmentHierarchyFacade;
 import net.sourceforge.ganttproject.task.TaskManager;
 import net.sourceforge.ganttproject.task.dependency.TaskDependency;
 import net.sourceforge.ganttproject.util.collect.Pair;
-import org.junit.Ignore;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.awt.*;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigDecimal;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -60,7 +65,6 @@ import static biz.ganttproject.impex.csv.SpreadsheetFormat.XLS;
  *
  * @author dbarashev (Dmitry Barashev)
  */
-@Ignore
 public class GPCsvImportTest extends TestCase {
 
   private Supplier<InputStream> createSupplier(final byte[] data) {
@@ -102,6 +106,14 @@ public class GPCsvImportTest extends TestCase {
         return GanttLanguage.getInstance().getText(key);
       }
     });
+    InternationalizationKt.setRootLocalizer(new DefaultLocalizer() {
+      @Nullable
+      @Override
+      public String formatTextOrNull(@NotNull String key, @NotNull Object... args) {
+        return key;
+      }
+    });
+
     GanttLanguage.getInstance().setShortDateFormat(new SimpleDateFormat("dd/MM/yy"));
   }
 
@@ -120,7 +132,7 @@ public class GPCsvImportTest extends TestCase {
         TaskRecords.TaskFields.ID);
     String data1 = "t1,23/07/12,25/07/12,Joe;John,,,,,,";
 
-    String header2 = buildResourceHeader(ResourceRecords.ResourceFields.NAME, ResourceRecords.ResourceFields.ID, ResourceRecords.ResourceFields.ROLE);
+    String header2 = buildResourceHeader(ResourceDefaultColumn.NAME, ResourceDefaultColumn.ID, ResourceDefaultColumn.ROLE);
     String data2 = "Joe,1,,,\nJohn,2,,,\nJack,3,,,";
 
     for (Pair<SpreadsheetFormat, Supplier<InputStream>> pair : createPairs(header1, data1, "", header2, data2)) {
@@ -141,12 +153,22 @@ public class GPCsvImportTest extends TestCase {
     HumanResourceManager resourceManager = builder.getResourceManager();
     RoleManager roleManager = new RoleManagerImpl();
 
-    String header1 = "Name,Begin date,End date,Assignments";
+    String header1 = buildTaskHeader(
+        TaskRecords.TaskFields.NAME,
+        TaskRecords.TaskFields.BEGIN_DATE,
+        TaskRecords.TaskFields.END_DATE,
+        TaskRecords.TaskFields.ASSIGNMENTS);
     String data1 = "t1,23/07/12,25/07/12,1:100.00;2:50.00";
     String data2 = "t2,23/07/12,25/07/12,3:100.00";
     String data3 = "t3,23/07/12,25/07/12,";
 
-    String header2 = "Name,ID,e-mail,Phone,Default role";
+    String header2 = buildResourceHeader(
+        ResourceDefaultColumn.NAME,
+        ResourceDefaultColumn.ID,
+        ResourceDefaultColumn.EMAIL,
+        ResourceDefaultColumn.PHONE,
+        ResourceDefaultColumn.ROLE
+    );
     String resources = "Joe,1,,,\nJohn,2,,,\nJack,3,,,";
     GanttCSVOpen importer = new GanttCSVOpen(createSupplier(
         Joiner.on('\n').join(header1, data1, data2, data3, "", header2, resources).getBytes(Charsets.UTF_8)),
@@ -187,7 +209,7 @@ public class GPCsvImportTest extends TestCase {
         TaskRecords.TaskFields.ID);
     String data1 = "";
 
-    String header2 = buildResourceHeader(ResourceRecords.ResourceFields.NAME, ResourceRecords.ResourceFields.ID, ResourceRecords.ResourceFields.ROLE);
+    String header2 = buildResourceHeader(ResourceDefaultColumn.NAME, ResourceDefaultColumn.ID, ResourceDefaultColumn.ROLE);
     String data2 = "Joe,1,Default:1";
 
     for (Pair<SpreadsheetFormat, Supplier<InputStream>> pair : createPairs(header1, data1, "", header2, data2)) {
@@ -195,7 +217,8 @@ public class GPCsvImportTest extends TestCase {
       HumanResourceManager resourceManager = builder.getResourceManager();
       doTestImportAssignments(pair.second(), pair.first(), builder, null, resourceManager, new RoleManagerImpl());
       Map<String, HumanResource> resourceMap = buildResourceMap(resourceManager);
-      assertEquals("project manager", resourceMap.get("Joe").getRole().getName());
+      // resProjectManager because we're using dummy localizer
+      assertEquals("resProjectManager", resourceMap.get("Joe").getRole().getName());
     }
   }
 
@@ -233,8 +256,8 @@ public class GPCsvImportTest extends TestCase {
     return Joiner.on(',').join(Stream.of(taskFields).map(TaskRecords.TaskFields::toString).iterator());
   }
 
-  private String buildResourceHeader(ResourceRecords.ResourceFields... resourceFields) {
-    return Joiner.on(',').join(Stream.of(resourceFields).map(ResourceRecords.ResourceFields::toString).iterator());
+  private String buildResourceHeader(ResourceDefaultColumn... resourceFields) {
+    return Joiner.on(',').join(Stream.of(resourceFields).map(ResourceDefaultColumn::toString).iterator());
   }
 
   public void testDependencies() throws Exception {
@@ -346,7 +369,13 @@ public class GPCsvImportTest extends TestCase {
     TaskManagerBuilder builder = TestSetupHelper.newTaskManagerBuilder();
     TaskManager taskManager = builder.build();
 
-    String header1 = "ID,Name,Begin date,Duration,End date";
+    String header1 = buildTaskHeader(
+        TaskRecords.TaskFields.ID,
+        TaskRecords.TaskFields.NAME,
+        TaskRecords.TaskFields.BEGIN_DATE,
+        TaskRecords.TaskFields.DURATION,
+        TaskRecords.TaskFields.END_DATE
+    );
     String data1 = "1,t1,23/07/12,,26/07/12";
 
     GanttCSVOpen importer = new GanttCSVOpen(createSupplier(Joiner.on('\n').join(header1, data1).getBytes(Charsets.UTF_8)),
@@ -357,11 +386,47 @@ public class GPCsvImportTest extends TestCase {
     assertEquals(4.0f, taskMap.get("t1").getDuration().getLength(builder.getTimeUnitStack().getDefaultTimeUnit()));
   }
 
+  public void testImportTotalCostAndTotalLoad() throws Exception {
+    TaskManagerBuilder builder = TestSetupHelper.newTaskManagerBuilder();
+    TaskManager taskManager = builder.build();
+    HumanResourceManager resourceManager = builder.getResourceManager();
+    RoleManager roleManager = new RoleManagerImpl();
+
+    String header1 = buildTaskHeader(
+        TaskRecords.TaskFields.NAME,
+        TaskRecords.TaskFields.BEGIN_DATE,
+        TaskRecords.TaskFields.END_DATE,
+        TaskRecords.TaskFields.ASSIGNMENTS);
+    String data1 = "t1,23/07/12,25/07/12,1:100.00;2:50.00";
+    String data2 = "t2,23/07/12,25/07/12,3:100.00";
+    String data3 = "t3,23/07/12,25/07/12,";
+
+    String header2 = buildResourceHeader(
+        ResourceDefaultColumn.NAME,
+        ResourceDefaultColumn.ID,
+        ResourceDefaultColumn.STANDARD_RATE,
+        ResourceDefaultColumn.TOTAL_COST,
+        ResourceDefaultColumn.TOTAL_LOAD
+    );
+    String resources = "Joe,1,10.0,20.0,100.0\nJohn,2,10.0,20.0,100.0\nJack,3,10.0,20.0,100.0";
+    GanttCSVOpen importer = new GanttCSVOpen(createSupplier(
+        Joiner.on('\n').join(header1, data1, data2, data3, "", header2, resources).getBytes(Charsets.UTF_8)),
+        SpreadsheetFormat.CSV,
+        taskManager, resourceManager, roleManager, builder.getTimeUnitStack());
+    importer.load();
+
+    Map<String, HumanResource> resourceMap = Maps.uniqueIndex(resourceManager.getResources(), input -> input.getName());
+    resourceMap.forEach((key, hr) -> assertEquals(BigDecimal.valueOf(10.0), hr.getStandardPayRate()));
+    resourceMap.forEach((key, hr) -> assertEquals(0, hr.getCustomProperties().size()));
+    resourceMap.forEach((key, hr) -> assertTrue(hr.getTotalLoad() > 0.0));
+    resourceMap.forEach((key, hr) -> assertTrue(hr.getTotalCost().doubleValue() > 0.0));
+  }
+
   private static void assertOrder(String first, String second) {
-    assertEquals(-1, TaskRecords.OUTLINE_NUMBER_COMPARATOR.compare(first, second));
-    assertEquals(1, TaskRecords.OUTLINE_NUMBER_COMPARATOR.compare(second, first));
-    assertEquals(0, TaskRecords.OUTLINE_NUMBER_COMPARATOR.compare(first, first));
-    assertEquals(0, TaskRecords.OUTLINE_NUMBER_COMPARATOR.compare(second, second));
+    assertEquals(-1, TaskRecordsKt.getOUTLINE_NUMBER_COMPARATOR().compare(first, second));
+    assertEquals(1, TaskRecordsKt.getOUTLINE_NUMBER_COMPARATOR().compare(second, first));
+    assertEquals(0, TaskRecordsKt.getOUTLINE_NUMBER_COMPARATOR().compare(first, first));
+    assertEquals(0, TaskRecordsKt.getOUTLINE_NUMBER_COMPARATOR().compare(second, second));
   }
 
   public void testOutlineNumberComparator() {
@@ -377,7 +442,14 @@ public class GPCsvImportTest extends TestCase {
     TaskManagerBuilder builder = TestSetupHelper.newTaskManagerBuilder();
     TaskManager taskManager = builder.build();
 
-    String header1 = "ID,Name,Begin date,End date,Task color";
+    //String header1 = "ID,Name,Begin date,End date,Task color";
+    String header1 = buildTaskHeader(
+        TaskRecords.TaskFields.ID,
+        TaskRecords.TaskFields.NAME,
+        TaskRecords.TaskFields.BEGIN_DATE,
+        TaskRecords.TaskFields.END_DATE,
+        TaskRecords.TaskFields.COLOR
+    );
     String data1 = "1,t1,23/07/12,26/07/12,\"#ff0000\"";
     String data2 = "2,t2,23/07/12,26/07/12,\"#00ff00\"";
     String data3 = "3,t3,23/07/12,26/07/12,\"#2a2a2a\"";

@@ -1,19 +1,9 @@
 apply plugin: 'java'
 apply plugin: 'idea'
 
-sourceSets {
-    main {
-        java {
-            srcDir 'src'
-        }
-        resources {
-        }
-    }
-}
-
 dependencies {
     providedCompile project(path: ':ganttproject', configuration: 'exported')
-    compile('net.sf.mpxj:mpxj:7.8.+') {
+    compile('net.sf.mpxj:mpxj:8.+') {
         exclude group: 'org.xerial', module: 'sqlite-jdbc'
         exclude group: 'com.jgoodies'
     }
